@@ -37,10 +37,9 @@ router.get("/", async (req, res) => {
 
         const items = games.map((game) => ({
             id: game.id,
-            title: game.title,
+            title: game.title ?? "",
             status: game.status ?? "backlog",
             hoursPlayed: game.hoursPlayed ?? 0,
-            rating: game.rating ?? null,
             _links: {
                 self: {href: `${process.env.BASE_URI}${game.id}`},
             },
@@ -99,16 +98,11 @@ router.post("/", async (req, res) => {
     try {
         const {title, status, hoursPlayed, rating} = req.body ?? {};
 
-        if (!title) {
-            return res.status(400).json({message: "title is required"});
+        if (!title || !status) {
+            return res.status(400).json({message: "title and status is required"});
         }
 
-        const created = await Game.create({
-            title,
-            status: status ?? "backlog",
-            hoursPlayed: hoursPlayed ?? 0,
-            rating: rating ?? null,
-        });
+        const created = await Game.create({title, status, hoursPlayed, rating});
 
         return res.status(201).json(created);
     } catch (e) {
@@ -130,6 +124,18 @@ router.get("/:id", async (req, res) => {
 
         if (!game) {
             return res.status(404).json({message: "Game not found"});
+        }
+        const lastModifiedDate = game.updatedAt instanceof Date ? game.updatedAt : new Date(game._id.getTimestamp());
+
+        res.set("Last-Modified", lastModifiedDate);
+
+        const ifModifiedSince = req.headers["if-modified-since"];
+        if (ifModifiedSince) {
+            const sinceDate = new Date(ifModifiedSince);
+
+            if ((sinceDate.getTime()) && lastModifiedDate <= sinceDate) {
+                return res.status(304).end();
+            }
         }
 
         res.status(200).json(game);
@@ -157,6 +163,47 @@ router.options("/:id", (req, res) => {
 
 // PUT update
 router.put("/:id", async (req, res) => {
+    try {
+        const gameId = req.params.id;
+
+        if (!mongoose.Types.ObjectId.isValid(gameId)) {
+            return res.status(400).json({message: "Invalid game id"});
+        }
+
+        const {title, status, hoursPlayed, rating} = req.body ?? {};
+
+        if (title === undefined && status === undefined && hoursPlayed === undefined && rating === undefined) {
+            return res.status(400).json({
+                message: "Provide at least one field to update: title, status, hoursPlayed, rating",
+            });
+        }
+
+        const updated = await Game.findByIdAndUpdate(
+            gameId,
+            {
+                ...(title !== undefined && {title}),
+                ...(status !== undefined && {status}),
+                ...(hoursPlayed !== undefined && {hoursPlayed}),
+                ...(rating !== undefined && {rating}),
+            },
+            {new: true, runValidators: true}
+        );
+
+        if (!updated) {
+            return res.status(404).json({message: "Game not found"});
+        }
+
+        res.status(200).json(updated);
+    } catch (e) {
+        if (e?.name === "ValidationError") {
+            return res.status(400).json({message: e.message});
+        }
+        res.status(500).json({message: "Failed to update game"});
+    }
+});
+// PATCH update
+
+router.patch("/:id", async (req, res) => {
     try {
         const gameId = req.params.id;
 

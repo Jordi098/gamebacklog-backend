@@ -7,13 +7,13 @@ const gameSchema = new mongoose.Schema(
         status: {
             type: String,
             required: true,
-            enum: ["backlog", "playing", "finished", "dropped"],
             default: "backlog",
         },
         hoursPlayed: {type: Number, required: true, default: 0},
         rating: {type: Number, required: false},
     },
     {
+        timestamps: true,
         toJSON: {
             virtuals: true,
             versionKey: false,
