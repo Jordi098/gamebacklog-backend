@@ -38,7 +38,10 @@ router.get("/", async (req, res) => {
         const limitParam = req.query.limit;
         const hasLimit = limitParam !== undefined && limitParam !== null && limitParam !== "";
 
-        const totalItems = await Game.countDocuments();
+        const status = (req.query.status || "").trim();
+        const filter = status ? {status} : {};
+
+        const totalItems = await Game.countDocuments(filter);
 
         const limit = hasLimit ? Math.max(1, parseInt(limitParam, 10) || 5) : totalItems;
         const totalPages = hasLimit ? Math.max(1, Math.ceil(totalItems / limit)) : 1;
@@ -46,17 +49,27 @@ router.get("/", async (req, res) => {
         const safePage = hasLimit ? Math.min(Math.max(1, page), totalPages) : 1;
         const skip = hasLimit ? (safePage - 1) * limit : 0;
 
-        const games = await Game.find()
-            .sort({_id: 1})
-            .skip(skip)
-            .limit(limit);
+        const games = await Game.find(filter).skip(skip).limit(limit);
 
         const base = process.env.BASE_URI;
 
         const makeHref = (p) => {
-            if (!hasLimit) return base;
-            return `${base}?page=${p}&limit=${limit}`;
+            let url = base;
+            if (!hasLimit) {
+                if (status) {
+                    url = `${base}?status=${status}`;
+                } else {
+                    url = base;
+                }
+                return url;
+            }
+            url = `${base}?page=${p}&limit=${limit}`;
+            if (status) {
+                url += `&status=${status}`;
+            }
+            return url;
         };
+
 
         const items = games.map((game) => ({
             id: game.id,
@@ -71,7 +84,6 @@ router.get("/", async (req, res) => {
             _links: {
                 self: {href: makeHref(safePage)},
                 collection: {href: base},
-
             },
             pagination: {
                 currentPage: hasLimit ? safePage : 1,
@@ -86,14 +98,12 @@ router.get("/", async (req, res) => {
                         next: safePage < totalPages ? {page: safePage + 1, href: makeHref(safePage + 1)} : null,
                     }
                     : {
-                        first: {page: 1, href: base},
-                        last: {page: 1, href: base},
+                        first: {page: 1, href: makeHref(1)},
+                        last: {page: 1, href: makeHref(1)},
                         previous: null,
                         next: null,
                     },
             },
-
-
         });
     } catch (e) {
         return res.status(500).json({message: e.message});
