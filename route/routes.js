@@ -33,31 +33,73 @@ router.get("/", async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
 
     try {
-        const games = await Game.find();
+        const page = parseInt(req.query.page, 10) || 1;
+
+        const limitParam = req.query.limit;
+        const hasLimit = limitParam !== undefined && limitParam !== null && limitParam !== "";
+
+        const totalItems = await Game.countDocuments();
+
+        const limit = hasLimit ? Math.max(1, parseInt(limitParam, 10) || 5) : totalItems;
+        const totalPages = hasLimit ? Math.max(1, Math.ceil(totalItems / limit)) : 1;
+
+        const safePage = hasLimit ? Math.min(Math.max(1, page), totalPages) : 1;
+        const skip = hasLimit ? (safePage - 1) * limit : 0;
+
+        const games = await Game.find()
+            .sort({_id: 1})
+            .skip(skip)
+            .limit(limit);
+
+        const base = process.env.BASE_URI;
+
+        const makeHref = (p) => {
+            if (!hasLimit) return base;
+            return `${base}?page=${p}&limit=${limit}`;
+        };
 
         const items = games.map((game) => ({
             id: game.id,
             title: game.title ?? "",
             status: game.status ?? "backlog",
             hoursPlayed: game.hoursPlayed ?? 0,
-            _links: {
-                self: {href: `${process.env.BASE_URI}${game.id}`},
-            },
+            _links: {self: {href: `${base}${game.id}`}},
         }));
 
-        const gameCollection = {
+        return res.status(200).json({
             items,
             _links: {
-                self: {href: `${process.env.BASE_URI}`},
-                collection: {href: `${process.env.BASE_URI}`},
-            },
-        };
+                self: {href: makeHref(safePage)},
+                collection: {href: base},
 
-        return res.status(200).json(gameCollection);
+            },
+            pagination: {
+                currentPage: hasLimit ? safePage : 1,
+                currentItems: items.length,
+                totalPages,
+                totalItems,
+                _links: hasLimit
+                    ? {
+                        first: {page: 1, href: makeHref(1)},
+                        last: {page: totalPages, href: makeHref(totalPages)},
+                        previous: safePage > 1 ? {page: safePage - 1, href: makeHref(safePage - 1)} : null,
+                        next: safePage < totalPages ? {page: safePage + 1, href: makeHref(safePage + 1)} : null,
+                    }
+                    : {
+                        first: {page: 1, href: base},
+                        last: {page: 1, href: base},
+                        previous: null,
+                        next: null,
+                    },
+            },
+
+
+        });
     } catch (e) {
-        return res.status(500).json({message: "Failed to fetch games"});
+        return res.status(500).json({message: e.message});
     }
 });
+
 
 // POST seed
 router.post("/seed", async (req, res) => {
@@ -66,7 +108,7 @@ router.post("/seed", async (req, res) => {
 
         await Game.deleteMany({});
 
-        const rawAmount = req.body?.amount ?? 10;
+        const rawAmount = req.body?.amount ?? 20;
         const amount = Math.max(0, Math.min(500, Number(rawAmount) || 10));
 
         const statuses = ["backlog", "playing", "finished", "dropped"];
@@ -116,10 +158,6 @@ router.get("/:id", async (req, res) => {
     try {
         const gameId = req.params.id;
 
-        if (!mongoose.Types.ObjectId.isValid(gameId)) {
-            return res.status(400).json({message: "Invalid game id"});
-        }
-
         const game = await Game.findById(gameId);
 
         if (!game) {
@@ -166,9 +204,6 @@ router.put("/:id", async (req, res) => {
     try {
         const gameId = req.params.id;
 
-        if (!mongoose.Types.ObjectId.isValid(gameId)) {
-            return res.status(400).json({message: "Invalid game id"});
-        }
 
         const {title, status, hoursPlayed, rating} = req.body ?? {};
 
