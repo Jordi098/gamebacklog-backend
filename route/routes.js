@@ -145,7 +145,7 @@ router.post("/", async (req, res) => {
 
             return res.status(201).json({METHOD: "SEED", amount, games});
         }
-        
+
         // normal POST to create a new game
         try {
             const {title, status, hoursPlayed, rating} = req.body ?? {};
@@ -297,9 +297,6 @@ router.delete("/:id", async (req, res) => {
     try {
         const gameId = req.params.id;
 
-        if (!mongoose.Types.ObjectId.isValid(gameId)) {
-            return res.status(400).json({message: "Invalid game id"});
-        }
 
         const deleted = await Game.findByIdAndDelete(gameId);
 
