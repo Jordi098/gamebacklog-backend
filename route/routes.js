@@ -112,53 +112,57 @@ router.get("/", async (req, res) => {
 
 
 // POST seed
-router.post("/seed", async (req, res) => {
-    try {
-        const games = [];
-
-        await Game.deleteMany({});
-
-        const rawAmount = req.body?.amount ?? 20;
-        const amount = Math.max(0, Math.min(500, Number(rawAmount) || 10));
-
-        const statuses = ["backlog", "playing", "finished", "dropped"];
-
-        for (let i = 0; i < amount; i++) {
-            const gameData = new Game({
-                title: faker.commerce.productName(),
-                status: faker.helpers.arrayElement(statuses),
-                hoursPlayed: faker.number.int({min: 0, max: 250}),
-                rating: faker.datatype.boolean()
-                    ? faker.number.int({min: 1, max: 10})
-                    : null,
-            });
-
-            const saved = await gameData.save();
-            games.push(saved);
-        }
-
-        res.status(201).json({amount, games});
-    } catch (e) {
-        res.status(500).json({message: e.message || "Failed to seed games"});
-    }
-});
-
-// POST create
 router.post("/", async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
 
     try {
-        const {title, status, hoursPlayed, rating} = req.body ?? {};
+        const overload = (req.body?.METHOD || "").toUpperCase();
 
-        if (!title || !status) {
-            return res.status(400).json({message: "title and status is required"});
+        // POST OVERLOAD: SEED
+        if (overload === "SEED") {
+            const games = [];
+
+            await Game.deleteMany({});
+
+            const rawAmount = req.body?.amount ?? 20;
+            const amount = Math.max(0, Math.min(500, Number(rawAmount) || 10));
+
+            const statuses = ["backlog", "playing", "finished", "dropped"];
+
+            for (let i = 0; i < amount; i++) {
+                const gameData = new Game({
+                    title: faker.commerce.productName(),
+                    status: faker.helpers.arrayElement(statuses),
+                    hoursPlayed: faker.number.int({min: 0, max: 250}),
+                    rating: faker.datatype.boolean()
+                        ? faker.number.int({min: 1, max: 10})
+                        : null,
+                });
+
+                const saved = await gameData.save();
+                games.push(saved);
+            }
+
+            return res.status(201).json({METHOD: "SEED", amount, games});
+        }
+        
+        // normal POST to create a new game
+        try {
+            const {title, status, hoursPlayed, rating} = req.body ?? {};
+
+            if (!title || !status) {
+                return res.status(400).json({message: "title and status is required"});
+            }
+
+            const created = await Game.create({title, status, hoursPlayed, rating});
+
+            return res.status(201).json(created);
+        } catch (e) {
+            return res.status(500).json({message: e.message || "Failed to create game"});
         }
 
-        const created = await Game.create({title, status, hoursPlayed, rating});
-
-        return res.status(201).json(created);
     } catch (e) {
-        return res.status(500).json({message: e.message || "Failed to create game"});
+        return res.status(500).json({message: e.message || "Failed to process request"});
     }
 });
 
