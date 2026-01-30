@@ -9,6 +9,7 @@ const gameSchema = new mongoose.Schema(
             required: true,
             default: "backlog",
         },
+        description: {type: String, default: ""},
         hoursPlayed: {type: Number, required: true, default: 0},
         rating: {type: Number, required: false},
     },

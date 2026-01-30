@@ -9,23 +9,31 @@ router.use((req, res, next) => {
     if (req.method === "OPTIONS") return next();
 
     const accept = req.headers.accept || "";
-    if (accept.includes("application/json") || accept.includes("*/*") || accept === "") {
+    if (accept.includes("application/json") || accept.includes("*/*")) {
         return next();
     }
 
-    return res.status(406).json({message: "Not acceptable, only application/json is supported"});
+    return res
+        .status(406)
+        .json({message: "Not acceptable, only application/json is supported"});
 });
 
-router.get("/", (req, res, next) => {
-    const acceptHeader = req.headers.accept || "";
-    console.log(`Client accepteert: ${acceptHeader}`);
 
-    if (acceptHeader.includes("application/json") || acceptHeader.includes("*/*") || acceptHeader === "") {
-        console.log("Dit is een JSON-response");
-        return next();
-    }
+// OPTIONS
+router.options("/", (req, res) => {
+    res.set("Allow", "GET, POST, OPTIONS");
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Accept");
+    return res.sendStatus(204);
+});
 
-    return res.status(400).send("Illegal format");
+router.options("/:id", (req, res) => {
+    res.set("Allow", "GET, PUT, PATCH, DELETE, OPTIONS");
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Methods", "GET, PUT, PATCH, DELETE, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Accept");
+    return res.sendStatus(204);
 });
 
 // GET collection
@@ -39,15 +47,34 @@ router.get("/", async (req, res) => {
         const hasLimit = limitParam !== undefined && limitParam !== null && limitParam !== "";
 
         const status = (req.query.status || "").trim();
-        const filter = status ? {status} : {};
-
+        let filter = {};
+        // apply status filter if provided
+        if (status) {
+            filter = {status};
+        }
+        // count total items matching filter
         const totalItems = await Game.countDocuments(filter);
+        let limit;
+        let totalPages;
+        let safePage;
+        let skip;
 
-        const limit = hasLimit ? Math.max(1, parseInt(limitParam, 10) || 5) : totalItems;
-        const totalPages = hasLimit ? Math.max(1, Math.ceil(totalItems / limit)) : 1;
+        if (hasLimit) {
+            // enforce limit boundaries
+            limit = Math.max(1, parseInt(limitParam, 10) || 5);
+            // calculate total pages
+            totalPages = Math.max(1, Math.ceil(totalItems / limit));
+            // enforce page boundaries
+            safePage = Math.min(Math.max(1, page), totalPages);
+            // calculate skip
+            skip = (safePage - 1) * limit;
+        } else {
+            limit = totalItems;
+            totalPages = 1;
 
-        const safePage = hasLimit ? Math.min(Math.max(1, page), totalPages) : 1;
-        const skip = hasLimit ? (safePage - 1) * limit : 0;
+            safePage = 1;
+            skip = 0;
+        }
 
         const games = await Game.find(filter).skip(skip).limit(limit);
 
@@ -69,7 +96,6 @@ router.get("/", async (req, res) => {
             }
             return url;
         };
-
 
         const items = games.map((game) => ({
             id: game.id,
@@ -110,8 +136,7 @@ router.get("/", async (req, res) => {
     }
 });
 
-
-// POST seed
+// POST (overload SEED + normal create)
 router.post("/", async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
 
@@ -133,6 +158,7 @@ router.post("/", async (req, res) => {
                 const gameData = new Game({
                     title: faker.commerce.productName(),
                     status: faker.helpers.arrayElement(statuses),
+                    description: faker.lorem.sentence(),
                     hoursPlayed: faker.number.int({min: 0, max: 250}),
                     rating: faker.datatype.boolean()
                         ? faker.number.int({min: 1, max: 10})
@@ -146,21 +172,15 @@ router.post("/", async (req, res) => {
             return res.status(201).json({METHOD: "SEED", amount, games});
         }
 
-        // normal POST to create a new game
-        try {
-            const {title, status, hoursPlayed, rating} = req.body ?? {};
+        // normal POST: create game
+        const {title, status, description, hoursPlayed, rating} = req.body ?? {};
 
-            if (!title || !status) {
-                return res.status(400).json({message: "title and status is required"});
-            }
-
-            const created = await Game.create({title, status, hoursPlayed, rating});
-
-            return res.status(201).json(created);
-        } catch (e) {
-            return res.status(500).json({message: e.message || "Failed to create game"});
+        if (!title || !status) {
+            return res.status(400).json({message: "title and status is required"});
         }
 
+        const created = await Game.create({title, status, description, hoursPlayed, rating});
+        return res.status(201).json(created);
     } catch (e) {
         return res.status(500).json({message: e.message || "Failed to process request"});
     }
@@ -177,53 +197,48 @@ router.get("/:id", async (req, res) => {
         if (!game) {
             return res.status(404).json({message: "Game not found"});
         }
-        const lastModifiedDate = game.updatedAt instanceof Date ? game.updatedAt : new Date(game._id.getTimestamp());
+
+        let lastModifiedDate;
+        if (game.updatedAt instanceof Date) {
+            lastModifiedDate = game.updatedAt;
+        } else {
+            lastModifiedDate = new Date(game._id.getTimestamp());
+        }
+
 
         res.set("Last-Modified", lastModifiedDate);
 
         const ifModifiedSince = req.headers["if-modified-since"];
         if (ifModifiedSince) {
             const sinceDate = new Date(ifModifiedSince);
-
-            if ((sinceDate.getTime()) && lastModifiedDate <= sinceDate) {
+            if (sinceDate.getTime() && lastModifiedDate <= sinceDate) {
                 return res.status(304).end();
             }
         }
 
-        res.status(200).json(game);
+        return res.status(200).json(game);
     } catch (e) {
-        res.status(500).json({message: "Failed to fetch game"});
+        return res.status(500).json({message: "Failed to fetch game"});
     }
-});
-
-// OPTIONS
-router.options("/", (req, res) => {
-    res.set("Allow", "GET, POST, OPTIONS");
-    res.set("Access-Control-Allow-Origin", "*");
-    res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.set("Access-Control-Allow-Headers", "Content-Type, Accept");
-    return res.sendStatus(204);
-});
-
-router.options("/:id", (req, res) => {
-    res.set("Allow", "GET, PUT, DELETE, OPTIONS");
-    res.set("Access-Control-Allow-Origin", "*");
-    res.set("Access-Control-Allow-Methods", "GET, PUT, DELETE, OPTIONS");
-    res.set("Access-Control-Allow-Headers", "Content-Type, Accept");
-    return res.sendStatus(204);
 });
 
 // PUT update
 router.put("/:id", async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
     try {
         const gameId = req.params.id;
 
+        const {title, status, description, hoursPlayed, rating} = req.body ?? {};
 
-        const {title, status, hoursPlayed, rating} = req.body ?? {};
-
-        if (title === undefined && status === undefined && hoursPlayed === undefined && rating === undefined) {
+        if (
+            title === undefined &&
+            status === undefined &&
+            description === undefined &&
+            hoursPlayed === undefined &&
+            rating === undefined
+        ) {
             return res.status(400).json({
-                message: "Provide at least one field to update: title, status, hoursPlayed, rating",
+                message: "Provide at least one field to update: title, status, description, hoursPlayed, rating",
             });
         }
 
@@ -232,6 +247,7 @@ router.put("/:id", async (req, res) => {
             {
                 ...(title !== undefined && {title}),
                 ...(status !== undefined && {status}),
+                ...(description !== undefined && {description}),
                 ...(hoursPlayed !== undefined && {hoursPlayed}),
                 ...(rating !== undefined && {rating}),
             },
@@ -242,29 +258,32 @@ router.put("/:id", async (req, res) => {
             return res.status(404).json({message: "Game not found"});
         }
 
-        res.status(200).json(updated);
+        return res.status(200).json(updated);
     } catch (e) {
         if (e?.name === "ValidationError") {
             return res.status(400).json({message: e.message});
         }
-        res.status(500).json({message: "Failed to update game"});
+        return res.status(500).json({message: "Failed to update game"});
     }
 });
-// PATCH update
 
+// PATCH update
 router.patch("/:id", async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
     try {
         const gameId = req.params.id;
 
-        if (!mongoose.Types.ObjectId.isValid(gameId)) {
-            return res.status(400).json({message: "Invalid game id"});
-        }
+        const {title, status, description, hoursPlayed, rating} = req.body ?? {};
 
-        const {title, status, hoursPlayed, rating} = req.body ?? {};
-
-        if (title === undefined && status === undefined && hoursPlayed === undefined && rating === undefined) {
+        if (
+            title === undefined &&
+            status === undefined &&
+            description === undefined &&
+            hoursPlayed === undefined &&
+            rating === undefined
+        ) {
             return res.status(400).json({
-                message: "Provide at least one field to update: title, status, hoursPlayed, rating",
+                message: "Provide at least one field to update: title, status, description, hoursPlayed, rating",
             });
         }
 
@@ -273,6 +292,7 @@ router.patch("/:id", async (req, res) => {
             {
                 ...(title !== undefined && {title}),
                 ...(status !== undefined && {status}),
+                ...(description !== undefined && {description}),
                 ...(hoursPlayed !== undefined && {hoursPlayed}),
                 ...(rating !== undefined && {rating}),
             },
@@ -283,20 +303,20 @@ router.patch("/:id", async (req, res) => {
             return res.status(404).json({message: "Game not found"});
         }
 
-        res.status(200).json(updated);
+        return res.status(200).json(updated);
     } catch (e) {
         if (e?.name === "ValidationError") {
             return res.status(400).json({message: e.message});
         }
-        res.status(500).json({message: "Failed to update game"});
+        return res.status(500).json({message: "Failed to update game"});
     }
 });
 
 // DELETE remove
 router.delete("/:id", async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
     try {
         const gameId = req.params.id;
-
 
         const deleted = await Game.findByIdAndDelete(gameId);
 
@@ -304,9 +324,9 @@ router.delete("/:id", async (req, res) => {
             return res.status(404).json({message: "Game not found"});
         }
 
-        res.status(204).send();
+        return res.status(204).send();
     } catch (e) {
-        res.status(500).json({message: "Failed to delete game"});
+        return res.status(500).json({message: "Failed to delete game"});
     }
 });
 

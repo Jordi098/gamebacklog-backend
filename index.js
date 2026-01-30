@@ -9,7 +9,7 @@ app.use(express.json());
 try {
     await mongoose.connect(process.env.MONGODB_URI);
     console.log("MongoDB connected");
-    app.use(express.urlencoded())
+    app.use(express.urlencoded({extended: true}));
     app.use("/backlog", router);
 } catch (e) {
     console.log("Database connection failed", e.message);
